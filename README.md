@@ -2,6 +2,10 @@
 
 Sentinel is a real-time API threat detection and traffic monitoring system. It is being built incrementally as a portfolio project, with the detection engine, tests, measurements, and architectural trade-offs documented as each phase lands.
 
+**[View the hosted dashboard demo](https://sentinel-api-defense.vercel.app)** · **[Source code](https://github.com/sahraali252/sentinel)**
+
+The hosted portfolio demo uses clearly labeled sample telemetry because Kafka, Redis, and PostgreSQL run in the local Docker stack. Run the stack below for live end-to-end detection.
+
 > **Current status:** End-to-end MVP — simulated traffic flows through Kafka into the configurable detector, Redis-backed detection state, PostgreSQL alert history, and the live React dashboard.
 
 ## Current architecture
