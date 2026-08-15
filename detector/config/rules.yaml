@@ -1,0 +1,39 @@
+rate_limit:
+  enabled: true
+  requests: 120
+  window: 10s
+  severity: medium
+
+anomaly:
+  enabled: true
+  alpha: 0.25
+  z_threshold: 3.5
+  minimum_samples: 20
+  state_ttl: 24h
+  severity: high
+
+credential_stuffing:
+  enabled: true
+  failures: 12
+  window: 60s
+  severity: critical
+
+scraping:
+  enabled: true
+  sequence_length: 8
+  max_id_gap: 2
+  state_ttl: 2m
+  severity: high
+
+signatures:
+  enabled: true
+  severity: critical
+
+whitelist:
+  source_ips:
+    - 127.0.0.1
+  cidrs:
+    - 10.255.0.0/16
+  endpoints:
+    - /health
+    - /metrics

@@ -1,0 +1,136 @@
+name: sentinel
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  kafka-init:
+    image: apache/kafka:3.9.1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092
+        --create --if-not-exists --topic ${KAFKA_TOPIC_RAW_EVENTS:-raw-events}
+        --partitions ${KAFKA_RAW_EVENTS_PARTITIONS:-6} --replication-factor 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinel_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinel}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentinel} -d ${POSTGRES_DB:-sentinel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  detector:
+    build:
+      context: ./detector
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_TOPIC_RAW_EVENTS: ${KAFKA_TOPIC_RAW_EVENTS:-raw-events}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-sentinel-detectors}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgres://sentinel:sentinel_dev@postgres:5432/sentinel?sslmode=disable}
+      DETECTOR_HTTP_ADDR: ${DETECTOR_HTTP_ADDR:-:8080}
+      DETECTOR_RULES_PATH: ${DETECTOR_RULES_PATH:-/config/rules.yaml}
+      DETECTOR_BATCH_SIZE: ${DETECTOR_BATCH_SIZE:-500}
+      DETECTOR_LAG_WARNING: ${DETECTOR_LAG_WARNING:-5000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/sentinel-detector", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ingestion:
+    build:
+      context: ./ingestion
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_TOPIC_RAW_EVENTS: ${KAFKA_TOPIC_RAW_EVENTS:-raw-events}
+      SIMULATOR_MODE: ${SIMULATOR_MODE:-mixed}
+      SIMULATOR_RATE: ${SIMULATOR_RATE:-25}
+      SIMULATOR_COUNT: ${SIMULATOR_COUNT:-0}
+      SIMULATOR_ATTACK_EVERY: ${SIMULATOR_ATTACK_EVERY:-40}
+      SIMULATOR_SPIKE_MULTIPLE: ${SIMULATOR_SPIKE_MULTIPLE:-10}
+      SIMULATOR_SEED: ${SIMULATOR_SEED:-20260814}
+      SIMULATOR_MAX_BUFFERED: ${SIMULATOR_MAX_BUFFERED:-10000}
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      target: development
+    environment:
+      VITE_DETECTOR_HTTP_URL: ${VITE_DETECTOR_HTTP_URL:-http://localhost:8080}
+      VITE_DETECTOR_WS_URL: ${VITE_DETECTOR_WS_URL:-ws://localhost:8080/ws}
+    ports:
+      - "5173:5173"
+    depends_on:
+      detector:
+        condition: service_healthy
+    volumes:
+      - ./dashboard:/app
+      - dashboard_node_modules:/app/node_modules
+
+volumes:
+  kafka_data:
+  redis_data:
+  postgres_data:
+  dashboard_node_modules:
